@@ -254,6 +254,10 @@ if __name__ == "__main__":
         #Gradient tracking on, make a pass over the data!
         model.train(True)
         running_loss = 0.0
+        
+        #Also monitor accuracy
+        #correct_predictions = 0
+        #total_samples = 0
 
         for i, (inputs, labels, segmentation_labels) in enumerate(train_loader):
             #labels = labels.unsqueeze(1).float()
@@ -274,15 +278,28 @@ if __name__ == "__main__":
             optimizer.step()
             
             running_loss += loss.item()
+            
+            #Calculate the accuracy for each batch
+            #binary_predictions = (binary_output > 0.5).float() #Convert probabilities to binary predictions with confidence threshold of 50%
+            #correct_predictions += (binary_predictions == labels).sum().item() #Count correct predictions
+            #total_samples += labels.size(0) #Total number of samples in the batch
+            
             if i % 10 == 9: #Print every 10 mini batches
                 avg_loss = running_loss / 10
                 print(f'    batch {i+1} loss: {avg_loss}')
                 writer.add_scalar('Loss/train', avg_loss, epoch_number * len(train_loader) + i + 1)
                 running_loss = 0.0    
         
+        #epoch_accuracy = correct_predictions / total_samples
+        
+        #Log the training accuracy for the epoch
+        #writer.add_scalar("Accuracy/train", epoch_accuracy, epoch_number + 1)
+        
         #Switch to evaluation mode
         model.eval()
-
+        #Want to monitor accuracy as well during testing
+        #vcorrect_predictions = 0
+        #vtotal_samples = 0
         #Reduce memory consumption by disabling gradient computation
         with torch.no_grad():
             running_vloss = 0.0
@@ -295,9 +312,19 @@ if __name__ == "__main__":
                 
                 vloss = combined_loss(torch.sigmoid(voutputs), vseg_outputs, vlabels, vseg_labels)
                 running_vloss += vloss.item() #Accumulate loss
+                
+                #Calculate the accuracy for each batch
+                #vbinary_predictions = (voutputs > 0.5).float() #Convert probabilities to binary predictions with confidence threshold of 50%
+                #vcorrect_predictions += (vbinary_predictions == vlabels).sum().item() #Count correct predictions
+                #vtotal_samples += vlabels.size(0) #Total number of samples in the batch
+
+        #vepoch_accuracy = vcorrect_predictions / vtotal_samples
 
         avg_vloss = running_vloss / len(validation_loader)
         print('LOSS train {} valid {}'.format(avg_loss, avg_vloss))
+        
+        #Log validation accuracy
+        #writer.add_scalar("Accuracy/validation", vepoch_accuracy, epoch_number + 1)
 
         #Log running loss averaged per batch for both the training AND validation
         writer.add_scalars('Training vs. Validation Loss',
@@ -309,6 +336,51 @@ if __name__ == "__main__":
         if avg_vloss < best_vloss:
             best_vloss = avg_vloss
             model_path = 'model_{}_{}.pth'.format(timestamp, epoch_number)
-        torch.save(model.state_dict(), model_path)
+            torch.save(model.state_dict(), model_path)
+            
+        #print(f'Training Accuracy: {epoch_accuracy*100:.2f}%, Validation Accuracy: {vepoch_accuracy*100:.2f}%')
         epoch_number += 1
+        
+        #Now we test to see how well the model performs
+        model.eval() #Should stay the same? Can't hurt to be explicit
+        #tcorrect_predictions = 0
+        #ttotal_samples = 0
+        tp_count = 0
+        fp_count = 0
+        
+        for test_inputs, test_labels, test_seg_labels in test_loader:
+            test_outputs, test_seg_outputs = model(test_inputs)
+            test_binary_predictions = (test_outputs > 0.5).float()
+            #tcorrect_predictions += (test_binary_predictions == test_labels).sum().item()
+            #ttotal_samples += test_labels.size(0)
+            
+            #Calculate true and false positives
+            tp_count += ((test_binary_predictions == test_labels) & (test_labels == 1)).sum().item()
+            fp_count += ((test_binary_predictions != test_labels) & (test_labels == 0)).sum().item()
+            
+            #Calculate precision
+            precision = tp_count / (tp_count + fp_count) if(tp_count + fp_count) > 0 else 0.0 #Prevent divide by 0 issues
+            
+            print(f'Precision: {precision * 100:.2f}%')
+            
+            #Display some images from testing
+            num_display = 3
+            for i in range(num_display):
+                image = test_inputs[i].permute(1, 2, 0).numpy() #Convert tensor to numpy array
+                plt.subplot(2, num_display, i+1)
+                plt.imshow(image)
+                plt.axis('off')
+                plt.title('Image')
+                
+                mask = test_seg_outputs[i].detach().permute(1, 2, 0).numpy() #Convert seg mask to numpy array
+                plt.subplot(2, num_display, i + 1 + num_display)
+                plt.imshow(mask.squeeze(), cmap='gray')
+                plt.axis('off')
+                plt.title('Segmentation Mask')
+            plt.show()
+            break
+            
+        #test_accuracy = tcorrect_predictions / ttotal_samples
+        #print(f'Test Accuracy: {test_accuracy * 100:.2f}%')
+            
           

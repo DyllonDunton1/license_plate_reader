@@ -5,8 +5,8 @@ import numpy as np
 from Torch_License_Trainer import PlateIdentifier
 
 #Load trained model
-model = PlateIdentifier()
-model.load_state_dict(torch.load('model_20240423_232948_9.pth'))
+model = PlateIdentifier(1)
+model.load_state_dict(torch.load('model_20240424_022905_29.pth'))
 model.eval()
 
 #Preprocess image
