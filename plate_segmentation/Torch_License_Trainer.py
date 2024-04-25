@@ -29,7 +29,7 @@ try:
     from torch.utils.data import Dataset
     from torchvision.transforms import transforms
     from torch.utils.data import DataLoader
-    from pycocotools.coco import COCO as CocoDetection
+    from pycocotools.coco import COCO 
     from torch.utils.tensorboard import SummaryWriter
     from datetime import datetime
     import cv2 as cv
@@ -44,7 +44,7 @@ except:
 class CustomCocoDetection(Dataset):
     def __init__(self, root, annotationFile, transform=None, target_category_id=1, image_size=(640, 640)):
         self.root = root
-        self.coco = CocoDetection(annotationFile)
+        self.coco = COCO(annotationFile)
         self.transform = transform
         self.target_category_id = target_category_id
         self.image_size = image_size
@@ -53,7 +53,7 @@ class CustomCocoDetection(Dataset):
     def filter_annotations(self):
         filtered_annotations = []
         for ann in self.coco.dataset['annotations']:
-            if ann['category_id'] == self.target_category_id:
+            if ann['category_id'] == self.target_category_id: #Category ID 1 corresponds to the license plate mask
                 filtered_annotations.append({  
                     'image_id' : ann['image_id'],
                     'bbox' : ann['bbox'],
@@ -77,8 +77,9 @@ class CustomCocoDetection(Dataset):
         #Make the segmentation mask
         mask = np.zeros(self.image_size, dtype=np.uint8)
         #print("Segmentation Mask Size:", mask.shape) #Check size
+       
         if annotation['segmentation']: #Use segmentation data if possible
-            seg_points = np.array(annotation['segmentation'][0]).reshape((-1 ,2))
+            seg_points = np.array(annotation['segmentation'][0]).reshape((-1 ,2)) #Reshape to x,y for fillPoly (2Darray w/ 2 columns)
             seg_points = np.round(seg_points).astype(np.int32)
             cv.fillPoly(mask, [seg_points], 1) #Fill license plate region with 1
         
@@ -87,7 +88,6 @@ class CustomCocoDetection(Dataset):
             
         label = annotation['label']
         segmentation_label = mask
-        segmentation_label = np.expand_dims(segmentation_label, axis=0) #Add a dimension for batch
         return img, label, segmentation_label
     
     def __len__(self):
@@ -100,17 +100,17 @@ transform = transforms.Compose([
 
 #Set Annotation path for training
 coco_train_annotation = "License-Plate-Object-Detection-6/train/_annotations.coco.json"
-coco_train = CocoDetection(coco_train_annotation)
+coco_train = COCO(coco_train_annotation)
 coco_train_path = "License-Plate-Object-Detection-6/train/" #actual image path
 
 #Set Annotation path for validation
 coco_validation_annotation = "License-Plate-Object-Detection-6/valid/_annotations.coco.json"
-coco_validation = CocoDetection(coco_validation_annotation)
+coco_validation = COCO(coco_validation_annotation)
 coco_validation_path = "License-Plate-Object-Detection-6/valid/" #actual validation path
 
 #Set Annotation path for testing
 coco_testing_annotation = "License-Plate-Object-Detection-6/test/_annotations.coco.json"
-coco_test = CocoDetection(coco_testing_annotation)
+coco_test = COCO(coco_testing_annotation)
 coco_test_path = "License-Plate-Object-Detection-6/test/" #actual test path
 
 #Create the datasets (which need COCO conversions for Pytorch)
@@ -122,7 +122,7 @@ test_dataset = CustomCocoDetection(root=coco_test_path, annotationFile=coco_test
 #Create the dataloaders to start actually pulling data in
 
 #Set an arbitrary batch size
-batch_size = 8
+batch_size = 2
 
 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True)
 validation_loader = DataLoader(validation_dataset, batch_size=batch_size, shuffle=False, drop_last=True)
@@ -179,65 +179,46 @@ import torch.nn.functional as F
 import torchvision.models as models
 
 class PlateIdentifier(nn.Module):
-        def __init__(self, num_classes):
+        def __init__(self):
             super(PlateIdentifier, self).__init__()
-            self.conv1 = nn.Conv2d(3, 16, 3, padding=1) #all of these images are 640x640, need to pad to maintain given a currnet convolve kernel of 16x16 pixels (3 ocrresponds to RGB)
-            self.conv2 = nn.Conv2d(16, 31, 3, padding=1) #In channels have to correspond to previous layer out channel count
-            self.pool = nn.MaxPool2d(2, 2) #2x2 pixel window that moves 2 pixels at a time
             
+            #Binary classification layer
+            self.fc = nn.Linear(640 * 640 * 3, 1) #640x640 input image, 3 channel RGB
             
-            #Upsample
-            self.upsample1 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-            self.upsample2 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-            
-            #Segmentation branch
-            self.seg_conv = nn.Conv2d(31, num_classes, 1) #Segmentation head with channel adjustment for segmentation
-
-            #Binary classification branch
-            self.fc1 = nn.Linear(31 * 640 * 640, 1) #Simple 1 for binary classification
-            self.sigmoid = nn.Sigmoid()
+            #Segmentation layers
+            self.conv1 = nn.Conv2d(3, 16, 3, padding=1)
+            self.conv2 = nn.Conv2d(16, 31, 3, padding=1)
+            self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+            self.seg_conv = nn.Conv2d(31, 2, 1) #2 segmentation classes, the license plate and numbers
 
         def forward(self, x):
-            x = self.pool(F.relu(self.conv1(x)))
-            x = self.pool(F.relu(self.conv2(x))) #Two relus, two pools
+            #Binary classification branch
+            x_binary = x.view(x.size(0), -1) #Flatten the input for fully connected layer
+            x_binary = torch.sigmoid(self.fc(x_binary)) #Sigmoid for binary classification
             
-            x = self.upsample1(x)
-            x = self.upsample2(x)
-            
-            #Segmentation branch output
-            seg_output = self.seg_conv(x)
-            #print("Segmentation Output Size:", seg_output.shape) #Shape right size?
-            
-            #Flatten for binary classification
-            x = x.view(x.size(0), -1)
-            binary_output = self.fc1(x) 
-            
-            return binary_output, seg_output
-            #return x.squeeze(1), seg_output #Remove the single dimension, s and return the segmentation output as well
+            #Segmentation Branch
+            x_seg = F.relu(self.conv1(x))
+            x_seg = F.relu(self.conv2(x_seg))
+            x_seg = self.upsample(x_seg)
+            #x_seg = F.interpolate(x_seg, size=(640, 640), mode='bilinear', align_corners=True)  #Adjust spatial dimensions
+            x_seg = self.seg_conv(x_seg)
+            x_seg = F.interpolate(x_seg, size=(640, 640), mode='bilinear', align_corners=True)  #Resize to match target size
+            return x_binary, x_seg
 
-num_classes = 1
-model = PlateIdentifier(num_classes)
+model = PlateIdentifier()
     
-#Define our loss function - using binary cross-entropy because plate is either there or it isn't
-loss_fn = nn.BCEWithLogitsLoss() 
-seg_loss_fn = nn.BCEWithLogitsLoss() #Segmentation loss
-
-
-#Since we are identifying AND segmenting, get the combined loss
-def combined_loss(binary_output, segmentation_output, binary_labels, segmentation_labels):
-    binary_labels = binary_labels.unsqueeze(1)
-    #Calculate BC loss
-    binary_loss = loss_fn(binary_output, binary_labels.float())
-    
-    #Calculate seg loss
-    segmentation_loss = seg_loss_fn(segmentation_output, segmentation_labels.float())
-    
-    #Combine losses 
-    combined_loss = binary_loss + segmentation_loss
-    
-    return combined_loss
+#Define our loss functions
+binary_loss_fn = nn.BCEWithLogitsLoss() #Binary crossentropy for binary classification
+seg_loss_fn = nn.CrossEntropyLoss() #Multiple class crossentropy
 
 optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
+
+def calculate_recall(true_positives, false_negatives):
+    if true_positives + false_negatives == 0:
+        return 0.0  #To handle cases where the denominator is zero
+    recall = true_positives / (true_positives + false_negatives)
+    return recall
+
 
 if __name__ == "__main__":
     #Set up the tensorboard writer
@@ -254,35 +235,28 @@ if __name__ == "__main__":
         #Gradient tracking on, make a pass over the data!
         model.train(True)
         running_loss = 0.0
-        
-        #Also monitor accuracy
-        #correct_predictions = 0
-        #total_samples = 0
 
         for i, (inputs, labels, segmentation_labels) in enumerate(train_loader):
-            #labels = labels.unsqueeze(1).float()
             #print(f'Batch {i+1}: Labels shape = {labels.shape}, Labels value = {labels}')
+            labels = labels.unsqueeze(1)
             optimizer.zero_grad()
             
-            outputs, seg_outputs = model(inputs) #Binary inputs AND segmentation inputs
+            binary_output, seg_outputs = model(inputs) #Get binary and segmentation info
             
-            binary_output = torch.sigmoid(outputs)
+            #Calculate binary classification loss
+            binary_loss = binary_loss_fn(binary_output, labels.float())
             
-            #Verify shapes before calculating loss
-            #print("Seg Output Size for Loss Calculation:", seg_outputs.shape) 
-            #print("Seg Label Size for Loss Calculation:", segmentation_labels.shape)
+            #Calculate segmentation loss
+            seg_loss = seg_loss_fn(seg_outputs, segmentation_labels.long())
+   
            
-            loss = combined_loss(binary_output, seg_outputs, labels, segmentation_labels)
+            total_loss = binary_loss + seg_loss
             
-            loss.backward()
+            total_loss.backward()
             optimizer.step()
             
-            running_loss += loss.item()
+            running_loss += total_loss.item()
             
-            #Calculate the accuracy for each batch
-            #binary_predictions = (binary_output > 0.5).float() #Convert probabilities to binary predictions with confidence threshold of 50%
-            #correct_predictions += (binary_predictions == labels).sum().item() #Count correct predictions
-            #total_samples += labels.size(0) #Total number of samples in the batch
             
             if i % 10 == 9: #Print every 10 mini batches
                 avg_loss = running_loss / 10
@@ -290,28 +264,41 @@ if __name__ == "__main__":
                 writer.add_scalar('Loss/train', avg_loss, epoch_number * len(train_loader) + i + 1)
                 running_loss = 0.0    
         
-        #epoch_accuracy = correct_predictions / total_samples
-        
-        #Log the training accuracy for the epoch
-        #writer.add_scalar("Accuracy/train", epoch_accuracy, epoch_number + 1)
-        
         #Switch to evaluation mode
         model.eval()
         #Want to monitor accuracy as well during testing
         #vcorrect_predictions = 0
         #vtotal_samples = 0
+        
+        #Monitor recall
+        true_positives = 0
+        false_positives = 0
+       
         #Reduce memory consumption by disabling gradient computation
         with torch.no_grad():
             running_vloss = 0.0
-            for i, vdata in enumerate(validation_loader):
-                vinputs, vlabels, vseg_labels = vdata
-                voutputs, vseg_outputs = model(vinputs)
+            for i, (vinputs, vlabels, vseg_labels) in enumerate(validation_loader):
+                vlabels = vlabels.unsqueeze(1)
+                vbinary_output, vseg_outputs = model(vinputs)
                 
-                #Convert vlabels to a long tensor
-                vlabels = vlabels.float()
+                vbinary_predictions = (vbinary_output > 0.5).float() #Convert probabilities to binary
                 
-                vloss = combined_loss(torch.sigmoid(voutputs), vseg_outputs, vlabels, vseg_labels)
-                running_vloss += vloss.item() #Accumulate loss
+                #Calculate binary classification loss
+                vbinary_loss = binary_loss_fn(vbinary_output, vlabels.float())
+                
+                #Calculate segmentation loss
+                vseg_loss = seg_loss_fn(vseg_outputs, vseg_labels.long())
+       
+                vlabels = vlabels.squeeze(1)
+                #Update true positive and false positive counts
+                true_positives = ((vbinary_predictions == 1) & (vlabels == 1)).sum().item()
+                false_positives = ((vbinary_predictions == 0) & (vlabels == 1)).sum().item()
+               
+                vtotal_loss = vbinary_loss + vseg_loss
+                
+                optimizer.step()
+                
+                running_vloss += vtotal_loss.item() #Accumulate loss
                 
                 #Calculate the accuracy for each batch
                 #vbinary_predictions = (voutputs > 0.5).float() #Convert probabilities to binary predictions with confidence threshold of 50%
@@ -338,49 +325,53 @@ if __name__ == "__main__":
             model_path = 'model_{}_{}.pth'.format(timestamp, epoch_number)
             torch.save(model.state_dict(), model_path)
             
-        #print(f'Training Accuracy: {epoch_accuracy*100:.2f}%, Validation Accuracy: {vepoch_accuracy*100:.2f}%')
+        recall = calculate_recall(true_positives, false_positives)
+        print("Recall:", recall)
+            
         epoch_number += 1
         
+
         #Now we test to see how well the model performs
-        model.eval() #Should stay the same? Can't hurt to be explicit
-        #tcorrect_predictions = 0
-        #ttotal_samples = 0
-        tp_count = 0
-        fp_count = 0
         
-        for test_inputs, test_labels, test_seg_labels in test_loader:
-            test_outputs, test_seg_outputs = model(test_inputs)
-            test_binary_predictions = (test_outputs > 0.5).float()
-            #tcorrect_predictions += (test_binary_predictions == test_labels).sum().item()
-            #ttotal_samples += test_labels.size(0)
-            
-            #Calculate true and false positives
-            tp_count += ((test_binary_predictions == test_labels) & (test_labels == 1)).sum().item()
-            fp_count += ((test_binary_predictions != test_labels) & (test_labels == 0)).sum().item()
-            
-            #Calculate precision
-            precision = tp_count / (tp_count + fp_count) if(tp_count + fp_count) > 0 else 0.0 #Prevent divide by 0 issues
-            
-            print(f'Precision: {precision * 100:.2f}%')
-            
-            #Display some images from testing
-            num_display = 3
-            for i in range(num_display):
-                image = test_inputs[i].permute(1, 2, 0).numpy() #Convert tensor to numpy array
-                plt.subplot(2, num_display, i+1)
-                plt.imshow(image)
-                plt.axis('off')
-                plt.title('Image')
+        #Define colors for different classes or segments
+        class_colors = {
+            0: [0, 0, 0],        # Background (black)
+            1: [255, 0, 0],      # License plate (red)
+            2: [0, 255, 0],      # Numbers (green)
+        }
                 
-                mask = test_seg_outputs[i].detach().permute(1, 2, 0).numpy() #Convert seg mask to numpy array
-                plt.subplot(2, num_display, i + 1 + num_display)
-                plt.imshow(mask.squeeze(), cmap='gray')
-                plt.axis('off')
-                plt.title('Segmentation Mask')
-            plt.show()
-            break
-            
-        #test_accuracy = tcorrect_predictions / ttotal_samples
-        #print(f'Test Accuracy: {test_accuracy * 100:.2f}%')
-            
+        #Convert segmentation mask to RGB format based on class colors
+        def mask_to_rgb(mask):
+            rgb_mask = np.zeros((mask.shape[0], mask.shape[1], 3), dtype=np.uint8)
+            for class_id, color in class_colors.items():
+                rgb_mask[mask == class_id] = color
+            return rgb_mask
+        
+        
+        model.eval() #Should stay the same? Can't hurt to be explicit
+        
+        with torch.no_grad():
+            for test_inputs, test_labels, test_seg_labels in test_loader:
+                test_outputs, test_seg_outputs = model(test_inputs)
+                test_binary_predictions = (test_outputs > 0.5).float()
+
+                
+                #Display some images from testing
+                num_display = min(3, len(test_inputs))
+                for i in range(num_display):
+                    image = test_inputs[i].permute(1, 2, 0).numpy() #Convert tensor to numpy array
+                    plt.subplot(2, num_display, i+1)
+                    plt.imshow(image)
+                    plt.axis('off')
+                    plt.title('Image')
+                    
+                    mask = test_seg_outputs[i, 1].detach().numpy() #Convert seg mask to numpy array
+                    rgb_mask = mask_to_rgb(mask)
+                    plt.subplot(2, num_display, i + 1 + num_display)
+                    plt.imshow(rgb_mask)
+                    plt.axis('off')
+                    plt.title('Segmentation Mask')
+                plt.show()
+                break
+
           
