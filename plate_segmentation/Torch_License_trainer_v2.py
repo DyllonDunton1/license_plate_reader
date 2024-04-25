@@ -16,8 +16,8 @@ except:
     print("Unable to import Roboflow")
     
 rf = Roboflow(api_key="zMt80qeo3jcFrWZ7aZC4")
-project = rf.workspace("jodaryle-factor-gjkmr").project("license-plate-object-detection")
-version = project.version(6)
+project = rf.workspace("cj-santos-e0nrn").project("license-plate-detection-3lgox")
+version = project.version(3)
 dataset = version.download("coco")
 
 #Since it is annotated in COCO, need to pull in additionall libraries
