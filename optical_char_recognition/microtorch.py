@@ -36,24 +36,66 @@ Op = namedtuple('Op', ['apply',
                    'name',
                    'nargs'])
 
-def conv_for(arg1, arg2):
-    print("Convolution Layer")
-    print(arg1[1].shape)
-    print(arg2.shape)
-    return [signal.convolve2d(img, arg2, boundary='fill', mode='same') for img in arg1]
+
+def default_padding(W_shape):
+  # For same size image, and kernel size k,
+  # the total padding must size must be s-1. Divide s-1 equally
+  # among left and right
+  return [((s-1)//2, (s-1)-(s-1)//2) for s in W_shape]
+
+def reversed_default_padding(W_shape):
+  return [p[::-1] for p in default_padding(W_shape)]
+
+def conv_for(A, w):
+    #print("Convolution Layer")
+    #print(type(arg1))
+    #print(arg1.shape)
+    #print(arg2.shape)
+    #return signal.convolve2d(arg1, arg2, boundary='fill', mode='same')
+    padding = default_padding(w.shape)
+    Apadded = np.pad(A, padding)
+    Y = signal.convolve2d(Apadded, w, mode='valid')
+    return Y
 
 #Add functionality for same size convolution
 def conv_vjp(dldf, A, w):
     #b is always going to be a 3x3 kernel so assume 0 padding to extra one px border
-    print("conv_vjp")
-    #do w first
-    dldw = signal.convolve2d(A, dldf)
-    dldA = signal.convolve2d(dldf, w.T, boundary='fill')
+    #print("conv_vjp")
+    #breakpoint()
+    
+    #dldw = conv(A,dldf)
+    #dldb = sum(dldf)
+    #dldA = conv(padded(dldf),180degree rotated w)
 
-    dldw = unbroadcast(w, dldw)
-    dldA = unbroadcast(A, dldA)
+    #zipped = zip(A,dldf)
+    #print(zipped[0])
 
-    return dldA, dldw
+    
+
+    #dldA =  np.asarray(signal.convolve2d(dldf, w[::-1,::-1], boundary='fill',mode='same'))
+    #img_A_padded = np.zeros((A.shape[0] + w.shape[0] - 1, A.shape[1] + w.shape[1] - 1))
+    #img_A_padded[w.shape[0]//2:A.shape[0]+w.shape[0]//2,w.shape[1]//2:A.shape[1]+w.shape[1]//2] = A
+    #dldw = signal.convolve2d(img_A_padded, dldf,mode='valid')
+
+
+    #dldb = np.sum(dldf, axis=-1)
+
+    #dldw = unbroadcast(w, dldw)
+    #dldA = unbroadcast(A, dldA)
+    #breakpoint()
+    #return dldA, dldw#, dldb
+
+
+    # The default padding needs to be reversed for dl__dY
+    dl__df_padded = np.pad(dldf, reversed_default_padding(w.shape))
+
+    # Use the default padding
+    Xpadded = np.pad(A, default_padding(w.shape))
+
+    # use the valid convolutions with custom padded X and W
+    return (signal.convolve2d(dl__df_padded, w[::-1, ::-1], mode='valid'),
+            signal.convolve2d(dldf, Xpadded[::-1, ::-1], mode='valid')
+            )
 
 convop = Op(
         apply=conv_for,
@@ -62,14 +104,19 @@ convop = Op(
         nargs=2)
 
 def maxpool_for(arg1):
-    print("MaxPool")
-    print(arg1.shape)
-    return [sk.block_reduce(img, (2,2), np.max) for img in arg1]
+    #print("MaxPool")
+    #print(type(arg1))
+    #print(arg1.shape)
+    return sk.block_reduce(arg1, (2,2), np.max)
 
 def maxpool_vjp(dldf, x):
-    print("maxpool vjp")
-    dxdl = dldf * np.where(x == np.max(x), 1, 0)
-    return unbroadcast(x, dxdl)
+    #print("maxpool vjp")
+    dldf_upsampled = np.kron(dldf, np.ones((2,2)))
+    #print(dldf_upsampled)
+    max = np.ones(x.shape)*np.max(x)
+    dxdl = np.where(x == max, dldf_upsampled, 0)
+    
+    return dxdl,
 
 maxpoolop = Op(
         apply=maxpool_for,
@@ -78,15 +125,21 @@ maxpoolop = Op(
         nargs=1)
 
 def flat_vjp(dldf, x):
-    print("flat vjp")
+    
+    #print("flat vjp")
+    #print(dldf.shape)
     dxdl = dldf.reshape(x.shape)
-    return unbroadcast(x, dxdl)
+    #print(dxdl.shape)
+    #print(x.shape)
+    #breakpoint()
+    return dxdl,
 
 def flat_for(x):
-    print("Flatten")
-    print(x.shape)
-    out = np.asarray([img.flatten() for img in x])
-    print(out.shape)
+    #print("Flatten")
+    #print(x.shape)
+    out = x.reshape((x.shape[0]*x.shape[1],))
+    #print(out.shape)
+    #breakpoint()
     return out
 
 flatop = Op(
@@ -95,20 +148,45 @@ flatop = Op(
         name='flat',
         nargs=1)
 
-def soft_for(x):
-    print("soft for")
-    print(softmax(x).shape)
-    return softmax(x)
+def softmax(x, axis=-1):
+    #print("Softmax: " + str(x.shape))
 
-def soft_vjp(dldf, x):
-    print("soft vjp")
-    return dldf
+    #x_max = absmax(x)
 
-softop = Op(
-        apply=soft_for,
-        vjp=soft_vjp,
-        name='soft',
-        nargs=1)
+    exponential = exp(x)# - x_max)
+    #print("Softmax: " + str(exponential.shape))
+    #print(exponential)
+    out = exponential.sum(axis=axis, keepdims=True)
+    #print("Softmax: " + str(out.shape))
+    #print(out)
+    #print("Softmax: " + str((exponential/out).shape))
+    #print((exponential/out))
+    #breakpoint()
+    return exponential/out
+
+
+
+
+def amax_for(x):
+    xmax = np.amax(x)
+    #breakpoint()
+    return xmax
+
+def amax_vjp(dldf, x):
+    #breakpoint()
+    max = np.ones(x.shape)*np.max(x)
+    dldx = np.where(x == max, dldf, 0)
+    #breakpoint()
+    return dldx,
+
+
+amaxop = Op(
+    apply=amax_for,
+    vjp=amax_vjp,
+    name='amax',
+    nargs=1
+)
+
 '''
 def arg_for(x):
 
@@ -153,9 +231,9 @@ def matmul_vjp(dldF, A, B):
     
     G = dldF
 
-    print(f'G: {G.shape}')
-    print(f'A: {A.shape}')
-    print(f'B: {B.shape}')
+    #print(f'G: {G.shape}')
+    #print(f'A: {A.shape}')
+    #print(f'B: {B.shape}')
 
     if G.ndim == 0:
         # Case 1: vector-vector multiplication
@@ -172,7 +250,7 @@ def matmul_vjp(dldF, A, B):
     # residing in the last two indexes and broadcast accordingly.
     if A.ndim >= 2 and B.ndim >= 2:
         dldA = G @ B.swapaxes(-2, -1)
-        print(A.swapaxes(-2,-1).shape)
+        #print(A.swapaxes(-2,-1).shape)
         dldB = A.swapaxes(-2, -1) @ G
     if A.ndim == 1:
         # 3. If the first argument is 1-D, it is promoted to a matrix by prepending a
@@ -202,7 +280,7 @@ def exp_vjp(dldf, x):
     dldx = dldf * np.exp(x)
     return (unbroadcast(x, dldx),)
 
-exp = Op(
+expop = Op(
     apply=np.exp,
     vjp=exp_vjp,
     name='exp',
@@ -211,7 +289,8 @@ exp = Op(
 def log_vjp(dldf, x):
     dldx = dldf / x
     return (unbroadcast(x, dldx),)
-log = Op(
+
+logop = Op(
     apply=np.log,
     vjp=log_vjp,
     name='log',
@@ -251,17 +330,7 @@ NoOp = Op(apply=None, name='', vjp=None, nargs=0)
 
 
 
-def exp(tensor):
-    tensor = tensor if isinstance(tensor, Tensor) else Tensor(tensor)
-    return Tensor(exp.apply(tensor.value),
-                parents=(tensor,),
-                op=exp)
 
-def log(tensor):
-    tensor = tensor if isinstance(tensor, Tensor) else Tensor(tensor)
-    return Tensor(log.apply(tensor.value),
-                parents=(tensor, ),
-                op=log)
 
 class Tensor:
     __array_priority__ = 100
@@ -329,9 +398,9 @@ class Tensor:
     def __neg__(self):
         return self*(-1)
     
-    def sum(self, axis=None):
+    def sum(self, axis=None, keepdims=False):
         cls = type(self)
-        return cls(sum_.apply(self.value, axis=axis),
+        return cls(sum_.apply(self.value, axis=axis, keepdims=keepdims),
                    parents=(self,),
                    op=sum_,
                    kwargs=dict(axis=axis))
@@ -355,8 +424,24 @@ class Tensor:
             p_vals = [p.value for p in self.parents]
             assert len(p_vals) == self.op.nargs
             p_grads = self.op.vjp(grad, *p_vals, **self.kwargs)
+            #print("op: " + self.op.name)
+            #for v,g in zip(p_vals, p_grads):
+            #    print(v.shape,g.shape) 
+            assert all([v.shape == g.shape for v,g in zip(p_vals, p_grads)]), f"Error in {self.op.name}"
             for p, g in zip(self.parents, p_grads):
                 p.backward(g)
+def exp(tensor):
+    tensor = tensor if isinstance(tensor, Tensor) else Tensor(tensor)
+    return Tensor(expop.apply(tensor.value),
+                parents=(tensor,),
+                op=expop)
+
+def log(tensor):
+    tensor = tensor if isinstance(tensor, Tensor) else Tensor(tensor)
+    return Tensor(logop.apply(tensor.value),
+                parents=(tensor, ),
+                op=logop)
+
 
 def maximum(tensor, other):
     tensor = tensor if isinstance(tensor, Tensor) else Tensor(tensor)
@@ -383,12 +468,13 @@ def flat(tensor):
     return Tensor(flatop.apply(tensor.value),
                     parents=(tensor,),
                     op=flatop)
+                    
 
-def soft_max(tensor):
+def absmax(tensor):
     tensor = tensor if isinstance(tensor, Tensor) else Tensor(tensor)
-    return Tensor(softop.apply(tensor.value),
+    return Tensor(amaxop.apply(tensor.value),
                     parents=(tensor,),
-                    op=softop)
+                    op=amaxop)
 '''
 def arg_max(tensor):
     tensor = tensor if isinstance(tensor, Tensor) else Tensor(tensor)

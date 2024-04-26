@@ -83,6 +83,11 @@ class Module:
         cls_name = type(self).__name__
         return f'{cls_name}({self._modules})'
     
+    def state_dict(self):
+        return # serializable format
+    def load_state_dict(self, state_dict):
+        # reinitialize the class using state_dict
+    
 def relu(x):
     return t.maximum(x, 0)
 
@@ -95,8 +100,8 @@ def m_pool(x):
 def flat(x):
     return t.flat(x)
 
-def soft(x):
-    return t.soft_max(x)
+def soft(x, axis=-1):
+    return t.softmax(x,axis=axis)
 
 def arg(x):
     return t.arg_max(x)
@@ -122,15 +127,15 @@ class Linear(Module):
     def __init__(self, in_features, out_features):
         super().__init__()
         # All the parameters are tracked for later retrieval through parameters
-        self.W = Parameter(np.random.rand(out_features, in_features))
-        self.b = Parameter(np.random.rand(out_features))
+        self.W = Parameter((2*np.random.rand(out_features, in_features)-1)*np.sqrt(6)/np.sqrt(in_features))
+        self.b = Parameter(np.zeros(out_features))
     
     def forward(self, x):
         # Implements W @ x + b even when x is (n, d)
-        print("Linear")
-        print(f'X: {x.shape}')
-        print(f'W: {self.W.shape}')
-        print(f'b: {self.b.shape}')
+        #print("Linear")
+        #print(f'X: {x.shape}')
+        #print(f'W: {self.W.shape}')
+        #print(f'b: {self.b.shape}')
         return x @ self.W.T + self.b
     
 class ReLU(Module):
@@ -141,8 +146,8 @@ class Convolution(Module):
     def __init__(self, size, kernel_size):    
         super().__init__()
         # All the parameters are tracked for later retrieval through parameters
-        self.W = Parameter(np.random.rand(kernel_size, kernel_size))
-        self.b = Parameter(np.random.rand(size))
+        self.W = Parameter((2*np.random.rand(kernel_size, kernel_size)-1)*np.sqrt(6)/kernel_size)
+        self.b = Parameter(np.zeros(1))
 
     def forward(self, x):
         return cnn(x, self.W) + self.b
