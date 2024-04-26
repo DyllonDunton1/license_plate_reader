@@ -1,0 +1,12 @@
+names:
+- license
+nc: 1
+roboflow:
+  license: CC BY 4.0
+  project: license-plate-detection-3lgox
+  url: https://universe.roboflow.com/cj-santos-e0nrn/license-plate-detection-3lgox/dataset/3
+  version: 3
+  workspace: cj-santos-e0nrn
+test: ../test/images
+train: License-Plate-Detection-3/train/images
+val: License-Plate-Detection-3/valid/images
