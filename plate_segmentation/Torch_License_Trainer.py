@@ -122,7 +122,7 @@ test_dataset = CustomCocoDetection(root=coco_test_path, annotationFile=coco_test
 #Create the dataloaders to start actually pulling data in
 
 #Set an arbitrary batch size
-batch_size = 2
+batch_size = 2 
 
 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True)
 validation_loader = DataLoader(validation_dataset, batch_size=batch_size, shuffle=False, drop_last=True)
