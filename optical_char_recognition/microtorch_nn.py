@@ -82,12 +82,7 @@ class Module:
     def __repr__(self):
         cls_name = type(self).__name__
         return f'{cls_name}({self._modules})'
-    
-    def state_dict(self):
-        return # serializable format
-    def load_state_dict(self, state_dict):
-        # reinitialize the class using state_dict
-    
+
 def relu(x):
     return t.maximum(x, 0)
 

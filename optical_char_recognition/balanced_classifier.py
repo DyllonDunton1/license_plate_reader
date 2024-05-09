@@ -28,8 +28,8 @@ def csv_read(path):
 def convert_labels_to_one_hot_vectors(input):
     return np.eye(36)[input]
 
-test_labels_indeces, test_imgs = csv_read('/home/dunto/ece590/emnist-balanced-test.csv')
-train_labels_indeces, train_imgs = csv_read('/home/dunto/ece590/emnist-balanced-train.csv')
+test_labels_indeces, test_imgs = csv_read('emnist-balanced-test.csv')
+train_labels_indeces, train_imgs = csv_read('emnist-balanced-train.csv')
 
 test_labels = convert_labels_to_one_hot_vectors(test_labels_indeces)
 train_labels = convert_labels_to_one_hot_vectors(train_labels_indeces)
@@ -168,7 +168,7 @@ def train_by_gradient_descent(model, loss, train_imgs, train_labels, lr=0.001):
         total_loss_on_the_dataset = loss_t.value
         for iter, index in enumerate(shuffle[:-1]):
             if iter%int(train_len/10) == 0:
-                print(f"{iter-(epoch-1)*train_len} out of {train_len} | current loss: {(total_loss_on_the_dataset/(iter+1)):04.04f}...")
+                print(f"{iter} out of {train_len} | current loss: {(total_loss_on_the_dataset/(iter+1)):04.04f}...")
             #print("Params: " + str(list(model.named_parameters())))
             for param in model.parameters():
                 assert param.grad is not None
