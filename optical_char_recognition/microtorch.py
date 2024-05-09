@@ -5,7 +5,6 @@
 # 4. https://github.com/hips/autograd
 from collections import namedtuple
 import numpy as np
-#import skimage.measure as sk
 from scipy import signal
 from scipy.special import softmax
 
@@ -102,28 +101,6 @@ convop = Op(
         vjp=conv_vjp,
         name='convolve',
         nargs=2)
-
-def maxpool_for(arg1):
-    #print("MaxPool")
-    #print(type(arg1))
-    #print(arg1.shape)
-    return sk.block_reduce(arg1, (2,2), np.max)
-
-def maxpool_vjp(dldf, x):
-    #print("maxpool vjp")
-    dldf_upsampled = np.kron(dldf, np.ones((2,2)))
-    #print(dldf_upsampled)
-    max = np.ones(x.shape)*np.max(x)
-    dxdl = np.where(x == max, dldf_upsampled, 0)
-    return dxdl,
-
-
-
-maxpoolop = Op(
-        apply=maxpool_for,
-        vjp=maxpool_vjp,
-        name='maxpool',
-        nargs=1)
 
 def flat_vjp(dldf, x):
     
