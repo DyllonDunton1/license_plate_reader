@@ -5,7 +5,7 @@
 # 4. https://github.com/hips/autograd
 from collections import namedtuple
 import numpy as np
-import skimage.measure as sk
+#import skimage.measure as sk
 from scipy import signal
 from scipy.special import softmax
 
@@ -115,8 +115,9 @@ def maxpool_vjp(dldf, x):
     #print(dldf_upsampled)
     max = np.ones(x.shape)*np.max(x)
     dxdl = np.where(x == max, dldf_upsampled, 0)
-    
     return dxdl,
+
+
 
 maxpoolop = Op(
         apply=maxpool_for,
@@ -148,6 +149,18 @@ flatop = Op(
         name='flat',
         nargs=1)
 
+def reshape_for(x, shape=None, **kwargs):
+    return x.reshape(shape, **kwargs)
+
+def reshape_vjp(dldf, x, shape=None, **kwargs):
+    return dldf.reshape(x.shape, **kwargs),
+
+reshapeop = Op(
+    apply=reshape_for,
+    vjp=reshape_vjp,
+    name='reshape',
+    nargs=1)
+
 def softmax(x, axis=-1):
     #print("Softmax: " + str(x.shape))
 
@@ -165,18 +178,16 @@ def softmax(x, axis=-1):
     return exponential/out
 
 
-
-
-def amax_for(x):
-    xmax = np.amax(x)
+def amax_for(x, **kwargs):
+    xmax = np.max(x, **kwargs)
     #breakpoint()
     return xmax
 
-def amax_vjp(dldf, x):
-    #breakpoint()
-    max = np.ones(x.shape)*np.max(x)
-    dldx = np.where(x == max, dldf, 0)
-    #breakpoint()
+def amax_vjp(dldf, x, axis=None, **kwargs):
+    #max = np.ones(x.shape)*np.max(x)
+    maxidx = np.argmax(x, axis=axis, **kwargs, keepdims=True)
+    dldx = np.zeros_like(x)
+    np.put_along_axis(dldx, maxidx, dldf.reshape(maxidx.shape), axis=axis)
     return dldx,
 
 
@@ -430,6 +441,14 @@ class Tensor:
             assert all([v.shape == g.shape for v,g in zip(p_vals, p_grads)]), f"Error in {self.op.name}"
             for p, g in zip(self.parents, p_grads):
                 p.backward(g)
+
+    def reshape(self, shape=None, **kw):
+        kwargs = dict(shape=shape, **kw)
+        return Tensor(reshapeop.apply(self.value, **kwargs),
+                      parents=(self,),
+                      op=reshapeop,
+                      kwargs=kwargs)
+
 def exp(tensor):
     tensor = tensor if isinstance(tensor, Tensor) else Tensor(tensor)
     return Tensor(expop.apply(tensor.value),
@@ -457,24 +476,30 @@ def convolve(tensor, kernel):
                     parents=(tensor, kernel),
                     op=convop)
 
-def maxpool(tensor):
-    tensor = tensor if isinstance(tensor, Tensor) else Tensor(tensor)
-    return Tensor(maxpoolop.apply(tensor.value),
-                    parents=(tensor,),
-                    op=maxpoolop)
-
 def flat(tensor):
     tensor = tensor if isinstance(tensor, Tensor) else Tensor(tensor)
     return Tensor(flatop.apply(tensor.value),
                     parents=(tensor,),
                     op=flatop)
-                    
 
-def absmax(tensor):
+def tmax(tensor, **kwargs):
     tensor = tensor if isinstance(tensor, Tensor) else Tensor(tensor)
-    return Tensor(amaxop.apply(tensor.value),
+    return Tensor(amaxop.apply(tensor.value, **kwargs),
                     parents=(tensor,),
-                    op=amaxop)
+                    op=amaxop,
+                    kwargs=kwargs)
+
+def maxpool(tensor):
+    K, L = (2, 2)
+    H, W = tensor.value.shape
+    assert H % K == 0
+    assert W % L == 0
+    shape = (H // K, K, W // L, L)
+    reshaped = tensor.reshape(shape=shape)
+    rowmax = tmax(reshaped, axis=-1)
+    assert rowmax.shape == shape[:3]
+    return tmax(rowmax, axis=1)
+
 '''
 def arg_max(tensor):
     tensor = tensor if isinstance(tensor, Tensor) else Tensor(tensor)
